@@ -42,6 +42,7 @@ Spring Boot 应用注册到 Nacos，通过 Higress MCP Bridge 暴露为 MCP Serv
 - Higress Gateway
 - MySQL 8.0（业务数据存储）
 - MyBatis（数据库访问）
+- Flyway（数据库结构版本化迁移）
 
 ---
 
@@ -61,13 +62,19 @@ docker compose -f docker-compose-infra.yml up -d
 docker compose -f docker-compose-infra.yml ps
 ```
 
+创建业务库 `app`（全新 MySQL 数据卷会在容器首次启动时自动创建；若库已存在可跳过）：
+
+```bash
+docker exec -i mysql mysql -uroot -proot < src/main/resources/db/create-app-database.sql
+```
+
 ### 步骤二：构建并启动本服务
 
 ```bash
 ./build.sh
 ```
 
-服务启动后会自动注册到 Nacos。
+服务启动时会通过 **Flyway** 自动执行未应用的数据库迁移（建表 + 演示种子数据），并注册到 Nacos。
 
 ### 步骤三：在 Nacos 配置 MCP Server
 
@@ -270,15 +277,40 @@ MySQL 运行在 Docker 容器中，自动持久化数据：
 | `orders` | 订单表 | 3 条 |
 | `employees` | 员工表 | 114 条 |
 
-### 初始化脚本
+### 数据库迁移（Flyway）
 
-数据库初始化脚本位于：`src/main/resources/db/init.sql`
+| 路径 | 说明 |
+|------|------|
+| `src/main/resources/db/migration/` | 结构迁移（`V1__` 起，只增不改） |
+| `src/main/resources/db/migration-seed/` | 演示种子数据（默认随应用启动导入） |
+| `src/main/resources/db/create-app-database.sql` | 仅创建 `app` 库（迁移前执行一次） |
 
-如需重新初始化：
+**默认行为**：应用启动时 Flyway 连接 `app` 库，依次执行 `V1__baseline_schema.sql`、`V2__seed_demo_data.sql`，并在库中维护 `flyway_schema_history` 表。
+
+**生产环境**（只要表结构、不要演示数据）：
 
 ```bash
-docker exec -i mysql mysql -uroot -proot < src/main/resources/db/init.sql
+export SPRING_PROFILES_ACTIVE=prod
+# 或 Docker：SPRING_PROFILES_ACTIVE=prod
 ```
+
+`application-prod.yml` 仅加载 `classpath:db/migration`，跳过 `migration-seed`。
+
+**表结构变更流程**：
+
+1. 新增脚本，例如 `src/main/resources/db/migration/V3__orders_add_remark.sql`
+2. 提交代码；各环境下次启动应用时自动执行新脚本
+3. 已发布过的迁移脚本**不要修改内容**；纠错请再写更高版本号的脚本
+
+**重新初始化业务库**（清空数据并从头迁移）：
+
+```bash
+docker exec -i mysql mysql -uroot -proot -e "DROP DATABASE IF EXISTS app;"
+docker exec -i mysql mysql -uroot -proot < src/main/resources/db/create-app-database.sql
+# 重启 nacos-mcp-demo 应用，Flyway 会重新执行 V1、V2
+```
+
+**从旧版手工 `init.sql` 升级**：若 `app` 库中已有表但没有 `flyway_schema_history`，请先按上面步骤删库重建，避免 Flyway 与手工建表冲突。
 
 ---
 
@@ -521,7 +553,10 @@ nacos-mcp-demo/
     └── resources/
         ├── application.yml                    # 应用配置
         ├── db/
-        │   └── init.sql                       # 数据库初始化脚本
+        │   ├── create-app-database.sql        # 创建 app 库
+        │   ├── docker/                        # MySQL 首次启动时建库
+        │   ├── migration/                     # Flyway 结构迁移
+        │   └── migration-seed/                # Flyway 演示种子数据
         └── mapper/                            # MyBatis XML 映射文件
 ```
 
@@ -571,13 +606,7 @@ curl "http://localhost:8082/api/employee/position?name=%E5%BC%A0%E4%BC%9F"
 
 ### 4. 重新初始化数据库
 
-如需重新初始化数据库：
-
-```bash
-# 删除并重建 app 数据库
-docker exec -i mysql mysql -uroot -proot -e "DROP DATABASE IF EXISTS app;"
-docker exec -i mysql mysql -uroot -proot < src/main/resources/db/init.sql
-```
+参见上文 [数据库迁移（Flyway）](#数据库迁移flyway) 中的「重新初始化业务库」。
 
 ### 5. 查看服务日志
 

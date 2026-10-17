@@ -1,58 +1,15 @@
--- 创建 app 数据库
-CREATE DATABASE IF NOT EXISTS `app` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 演示用种子数据（默认随应用启动导入；生产环境请使用 spring.profiles.active=prod 跳过）
 
-USE `app`;
-
--- 订单表
-CREATE TABLE IF NOT EXISTS `orders` (
-  `id` VARCHAR(64) NOT NULL COMMENT '订单ID',
-  `user_id` VARCHAR(64) NOT NULL COMMENT '用户ID',
-  `product` VARCHAR(255) NOT NULL COMMENT '产品名称',
-  `quantity` INT NOT NULL DEFAULT 1 COMMENT '数量',
-  `price` DECIMAL(10,2) NOT NULL COMMENT '价格',
-  `status` VARCHAR(32) NOT NULL DEFAULT 'pending' COMMENT '订单状态: pending, shipped, completed',
-  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  INDEX `idx_user_id` (`user_id`),
-  INDEX `idx_status` (`status`),
-  INDEX `idx_create_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
-
--- 用户表
-CREATE TABLE IF NOT EXISTS `users` (
-  `id` VARCHAR(64) NOT NULL COMMENT '用户ID',
-  `name` VARCHAR(128) NOT NULL COMMENT '用户姓名',
-  `email` VARCHAR(255) NOT NULL COMMENT '用户邮箱',
-  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  UNIQUE INDEX `idx_email` (`email`),
-  INDEX `idx_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
-
--- 员工表
-CREATE TABLE IF NOT EXISTS `employees` (
-  `id` INT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `name` VARCHAR(128) NOT NULL COMMENT '员工姓名',
-  `position` VARCHAR(128) NOT NULL COMMENT '工作岗位',
-  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  INDEX `idx_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='员工表';
-
--- 插入订单测试数据
 INSERT INTO `orders` (`id`, `user_id`, `product`, `quantity`, `price`, `status`, `create_time`) VALUES
 ('ORDER-001', 'user-1', 'iPhone 15 Pro', 1, 7999.00, 'completed', '2024-01-15 10:30:00'),
 ('ORDER-002', 'user-2', 'MacBook Pro 14', 1, 14999.00, 'shipped', '2024-01-16 14:20:00'),
 ('ORDER-003', 'user-1', 'AirPods Pro', 2, 1899.00, 'pending', '2024-01-17 09:15:00');
 
--- 插入用户测试数据
 INSERT INTO `users` (`id`, `name`, `email`) VALUES
 ('user-1', '张三', 'zhangsan@example.com'),
 ('user-2', '李四', 'lisi@example.com'),
 ('user-3', '王五', 'wangwu@example.com');
 
--- 插入员工测试数据（115 条）
 INSERT INTO `employees` (`name`, `position`) VALUES
 ('张伟', '后端开发'),
 ('王芳', '前端开发'),

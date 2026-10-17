@@ -11,6 +11,8 @@ services:
       MYSQL_DATABASE: nacos_devtest
       MYSQL_USER: nacos
       MYSQL_PASSWORD: nacos
+    volumes:
+      - ./src/main/resources/db/docker:/docker-entrypoint-initdb.d:ro
     networks:
       - mcp-net
     healthcheck:

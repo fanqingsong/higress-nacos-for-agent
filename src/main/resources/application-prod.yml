@@ -1,0 +1,4 @@
+# 生产环境：仅执行结构迁移，不导入演示种子数据
+spring:
+  flyway:
+    locations: classpath:db/migration
