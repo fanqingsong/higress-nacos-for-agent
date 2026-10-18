@@ -1,5 +1,5 @@
 import { useStream, useToolCalls } from '@langchain/react'
-import { AIMessage, HumanMessage } from '@langchain/core/messages'
+import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentState } from '../types'
 import { ChatInput } from './ChatInput'
@@ -10,6 +10,24 @@ const AGENT_URL =
   import.meta.env.VITE_AGENT_URL?.replace(/\/$/, '') ||
   'http://localhost:2024'
 const ASSISTANT_ID = 'deep_agent_todo_list'
+
+function messageText(msg: { text?: string; content?: unknown }): string {
+  if (typeof msg.text === 'string' && msg.text.trim()) return msg.text
+  const content = msg.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((block) => {
+      if (typeof block === 'string') return block
+      if (block && typeof block === 'object' && 'text' in block) {
+        const text = (block as { text?: unknown }).text
+        return typeof text === 'string' ? text : ''
+      }
+      return ''
+    })
+    .join('')
+    .trim()
+}
 
 const SUGGESTIONS = [
   '帮我查一下目前有哪些订单？',
@@ -114,35 +132,29 @@ export function AgentChat() {
 
           {stream.messages.map((msg) => {
             if (HumanMessage.isInstance(msg)) {
-              const content =
-                typeof msg.content === 'string'
-                  ? msg.content
-                  : JSON.stringify(msg.content)
               return (
                 <div key={msg.id} className="flex justify-end">
                   <div className="max-w-[85%] rounded-2xl rounded-br-md bg-sky-600 px-4 py-2 text-sm text-white">
-                    {content}
+                    {messageText(msg) || JSON.stringify(msg.content)}
                   </div>
                 </div>
               )
             }
 
             if (AIMessage.isInstance(msg)) {
-              const text =
-                typeof msg.text === 'string' && msg.text.trim()
-                  ? msg.text
-                  : typeof msg.content === 'string'
-                    ? msg.content
-                    : ''
+              const text = messageText(msg)
               const cards = toolCallsByMessageId.get(msg.id ?? '') ?? []
+              if (!text && cards.length === 0 && !msg.tool_calls?.length) {
+                return null
+              }
               return (
                 <div key={msg.id} className="flex justify-start">
                   <div className="max-w-[90%]">
-                    {text && (
+                    {text ? (
                       <div className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm">
                         {text}
                       </div>
-                    )}
+                    ) : null}
                     {cards.map((tc) => (
                       <ToolCard key={tc.callId} toolCall={tc} />
                     ))}
@@ -151,8 +163,37 @@ export function AgentChat() {
               )
             }
 
+            if (ToolMessage.isInstance(msg)) {
+              const output = messageText(msg) || String(msg.content ?? '')
+              const isError =
+                msg.status === 'error' || output.startsWith('Error:')
+              return (
+                <div key={msg.id} className="flex justify-start">
+                  <div className="max-w-[90%]">
+                    <ToolCard
+                      toolCall={{
+                        callId: msg.tool_call_id || msg.id || '',
+                        name: msg.name || 'tool',
+                        args: {},
+                        output,
+                        status: isError ? 'error' : 'finished',
+                      }}
+                    />
+                  </div>
+                </div>
+              )
+            }
+
             return null
           })}
+
+          {stream.isLoading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl rounded-bl-md border border-sky-100 bg-sky-50 px-4 py-2 text-sm text-sky-800">
+                正在调用模型 / MCP 工具，请稍候…
+              </div>
+            </div>
+          )}
 
           {stream.error != null && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">

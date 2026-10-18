@@ -25,13 +25,14 @@ def mcp_sse_url() -> str:
 async def _connect() -> tuple[list[Any], str | None]:
     url = mcp_sse_url()
     try:
-        from fastmcp.client import Client
         from fastmcp.client.transports import SSETransport
         from langchain.mcp import MCPAdapter
 
-        client = Client(SSETransport(url))
-        adapter = MCPAdapter(client)
-        await adapter.__aenter__()
+        # list_tools() enters and exits the FastMCP session itself. Do not keep
+        # the adapter entered — tools reconnect per call. A leaked session
+        # leaves nesting_counter=1 and later tool calls fail with
+        # "nesting counter should be 0 when starting new session".
+        adapter = MCPAdapter(SSETransport(url))
         tools = await adapter.list_tools()
         global _adapter
         _adapter = adapter

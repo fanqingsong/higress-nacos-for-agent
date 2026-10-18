@@ -42,6 +42,12 @@ def _build_model() -> ChatOpenAI:
         api_key=api_key,
         base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
         temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2")),
+        # SiliconFlow streaming deltas send the tool name only in the first chunk
+        # and "" afterwards; LangGraph v1 merge then drops the name.
+        disable_streaming=True,
+        output_version="v0",
+        timeout=90.0,
+        max_retries=1,
     )
 
 

@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       MCP_SSE_URL: http://higress:8080/mcp/mcp-test/sse
+      LC_OUTPUT_VERSION: v0
     networks:
       - mcp-net
     restart: unless-stopped

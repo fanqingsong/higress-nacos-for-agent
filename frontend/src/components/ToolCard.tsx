@@ -1,11 +1,19 @@
-import type { AssembledToolCall } from '@langchain/react'
-
 function truncate(text: string, max = 400): string {
   if (text.length <= max) return text
   return `${text.slice(0, max)}…`
 }
 
-export function ToolCard({ toolCall }: { toolCall: AssembledToolCall }) {
+export function ToolCard({
+  toolCall,
+}: {
+  toolCall: {
+    callId?: string
+    name?: string
+    args?: unknown
+    output?: unknown
+    status?: string
+  }
+}) {
   const name = toolCall.name ?? 'unknown'
   const status = toolCall.status ?? 'pending'
   const args =
