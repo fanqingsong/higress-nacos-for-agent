@@ -1,0 +1,26 @@
+apiVersion: networking.higress.io/v1
+kind: McpBridge
+metadata:
+  name: default
+  namespace: higress-system
+  creationTimestamp: "2000-01-01T00:00:00Z"
+  resourceVersion: "1"
+spec:
+  registries:
+  - domain: 127.0.0.1:8001
+    name: higress-console
+    port: 80
+    type: static
+  - authSecretName: nacos3-auth-local
+    domain: nacos-standalone
+    enableMCPServer: true
+    mcpServerBaseUrl: /mcp
+    nacosGroups:
+    - DEFAULT_GROUP
+    nacosNamespaceId: public
+    name: nacos3
+    port: 8848
+    type: nacos3
+    username: nacos
+    password: nacos
+status: {}

@@ -1,43 +1,17 @@
 services:
-  # =============================================================================
-  # AI Namespace Services
-  # =============================================================================
-
-  # AI Namespace
-  nacos-mcp-demo-ai:
-    image: "nacos-mcp-demo:ai-latest"
+  nacos-mcp-demo:
+    image: "nacos-mcp-demo:latest"
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nacos-mcp-demo-ai
+    container_name: nacos-mcp-demo
     ports:
       - "8082:8082"
     environment:
-      - SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos-standalone-mysql:8848
-      - SPRING_CLOUD_NACOS_DISCOVERY_USERNAME=nacos
-      - SPRING_CLOUD_NACOS_DISCOVERY_PASSWORD=nacos
-      - SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE=23d27840-99e3-4b47-b1ab-b35501029b54
-      - SPRING_CLOUD_NACOS_DISCOVERY_GROUP=DEFAULT_GROUP
-      - SPRING_CLOUD_NACOS_DISCOVERY_REGISTER_ENABLED=true
-    networks:
-      - mcp-net
-    restart: unless-stopped
-
-  # =============================================================================
-  # Public Namespace Service
-  # =============================================================================
-
-  # Public Namespace (8083)
-  nacos-mcp-demo-public:
-    image: "nacos-mcp-demo:public-latest"
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: nacos-mcp-demo-public
-    ports:
-      - "8083:8082"
-    environment:
-      - SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos-standalone-mysql:8848
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/app?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root
+      - SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos-standalone:8848
       - SPRING_CLOUD_NACOS_DISCOVERY_USERNAME=nacos
       - SPRING_CLOUD_NACOS_DISCOVERY_PASSWORD=nacos
       - SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE=public

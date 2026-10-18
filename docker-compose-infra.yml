@@ -23,7 +23,7 @@ services:
     restart: unless-stopped
 
   nacos:
-    image: nacos/nacos-server:v3.1.2
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-server:v3.1.2
     container_name: nacos-standalone
     depends_on:
       mysql:
@@ -46,14 +46,15 @@ services:
       NACOS_AUTH_TOKEN: SecretKey0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF
       NACOS_AUTH_IDENTITY_KEY: serverIdentity
       NACOS_AUTH_IDENTITY_VALUE: security
-    volumes:
-      - ./nacos-conf/application.yaml:/home/nacos/conf/application.yaml
+      NACOS_AUTH_ADMIN_ENABLE: "false"
     networks:
-      - mcp-net
+      mcp-net:
+        aliases:
+          - nacos-standalone-mysql
     restart: unless-stopped
 
   redis:
-    image: redis:latest
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/redis:latest
     container_name: redis
     ports:
       - "6379:6379"

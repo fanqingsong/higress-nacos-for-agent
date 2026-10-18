@@ -4,6 +4,8 @@ Spring Boot 应用注册到 Nacos，通过 Higress MCP Bridge 暴露为 MCP Serv
 
 ## 架构说明
 
+### 逻辑架构
+
 ```
 ┌─────────────┐     注册服务      ┌──────────────┐
 │  Spring Boot│ ────────────────> │   Nacos      │
@@ -27,12 +29,109 @@ Spring Boot 应用注册到 Nacos，通过 Higress MCP Bridge 暴露为 MCP Serv
                                    └──────────────┘
 ```
 
+### 网络拓扑架构
+
+本项目把基础设施和应用都跑在同一条 Docker 自定义网络 **`mcp-net`** 上。容器之间用 **容器名做 DNS**（例如 `mysql`、`nacos-standalone`、`redis`），不要写会变的容器 IP。宿主机通过端口映射访问控制台、REST API 和 MCP SSE。
+
+```
+                              宿主机 (localhost)
+  ┌────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+  │ 3306   │ 8848   │ 8080   │ 6379   │ 8001   │ 8081   │ 8082   │
+  │        │ 9848   │        │        │        │ 8443   │        │
+  └───┬────┴───┬────┴───┬────┴───┬────┴───┬────┴───┬────┴───┬────┘
+      │        │        │        │        │        │        │
+      │   Docker 端口映射（仅宿主机 ↔ 指定容器）
+      │        │        │        │        │        │        │
+┌─────▼────────▼────────▼────────▼────────▼────────▼────────▼─────┐
+│                    Docker Network: mcp-net                       │
+│                    （自定义 bridge，容器名可解析）                  │
+│                                                                  │
+│   ┌──────────┐   JDBC :3306    ┌─────────────────────────────┐  │
+│   │  mysql   │◄───────────────│ nacos-mcp-demo               │  │
+│   │  :3306   │                 │ 容器 8082 → 宿主机 8082      │  │
+│   │ 库 app   │                 │ Nacos namespace: public      │  │
+│   │ 库 nacos2│                 └──────────────▲──────────────┘  │
+│   └────┬─────┘                                │                │
+│        │  nacos2 持久化                        │ HTTP /api/*    │
+│        ▼                                       │ （服务发现后转发）│
+│   ┌────────────────┐  注册 / 发现 :8848/:9848  │                │
+│   │ nacos-standalone│◄─────────────────────────┘                │
+│   │ :8848 HTTP      │                                           │
+│   │ :9848 gRPC      │  拉 MCP 配置 / 服务实例                    │
+│   │ :8080 控制台     │────────────────────────────────┐          │
+│   └────────────────┘                                 │          │
+│                                                      ▼          │
+│   ┌──────────┐  SSE 会话 :6379  ┌────────────────────────────┐ │
+│   │  redis   │◄────────────────│ higress                     │ │
+│   │  :6379   │                  │ 控制台 :8001 → 宿主机 8001   │ │
+│   └──────────┘                  │ 网关   :8080 → 宿主机 8081   │ │
+│                                 │ HTTPS  :8443 → 宿主机 8443   │ │
+│                                 └──────────────▲───────────────┘ │
+└─────────────────────────────────────────────────│────────────────┘
+                                                  │
+                           MCP SSE  http://localhost:8081/mcp/mcp-test/sse
+                                                  │
+                                     ┌────────────┴────────────┐
+                                     │ Cursor / Qwen Code 等   │
+                                     │ AI Agent（跑在宿主机）    │
+                                     └─────────────────────────┘
+```
+
+#### 为什么必须用 `mcp-net`
+
+默认 `bridge` 网络没有容器名 DNS。两个 Compose 文件各自建网时，基础设施和应用也互相解析不到。因此先执行 `docker network create mcp-net`，再让 `docker-compose-infra.yml` 与 `docker-compose.yml` 都声明 `external: true` 接入同一网络。后端若以宿主机 JAR 跑并注册容器不可达的 IP，Higress 转发会 503；应用也必须进 `mcp-net`。
+
+#### 组件、容器名与端口
+
+| 角色 | 容器名 | 网络内地址 | 宿主机映射 | 说明 |
+|------|--------|------------|------------|------|
+| 业务库 + Nacos 库 | `mysql` | `mysql:3306` | `3306` | `app` 给业务；`nacos2` 给 Nacos |
+| 注册 / 配置 / MCP 定义 | `nacos-standalone` | `nacos-standalone:8848`（gRPC `9848`） | `8848` / `9848` / `8080` | 别名 `nacos-standalone-mysql`；控制台也可走 `8080` |
+| MCP SSE 会话 | `redis` | `redis:6379` | `6379` | 密码 `admin1234`；Higress 必须用容器名，不能写会变的 IP |
+| MCP / HTTP 网关 | `higress` | `higress:8080`、`:8001`、`:8443` | `8081` / `8001` / `8443` | 容器内网关是 **8080**，对外是 **8081** |
+| 业务应用 | `nacos-mcp-demo` | `nacos-mcp-demo:8082` | `8082` | 注册到 Nacos namespace `public`；REST 与 MCP 工具调用均走此实例 |
+
+Nacos 控制台默认 `nacos` / `nacos`。Higress McpBridge 里 `nacosNamespaceId: public`，与 `docker-compose.yml` 中的注册命名空间一致。
+
+#### 三个平面
+
+| 平面 | 路径 | 协议 / 端口 |
+|------|------|-------------|
+| **控制面** | 应用 → Nacos 注册实例；Higress → Nacos 拉 MCP Server 与实例列表 | HTTP `8848`，gRPC `9848` |
+| **数据面** | Agent → Higress SSE → 按 Nacos 实例转发到 Spring Boot `/api/*` | 宿主机 `8081`；网内 `higress:8080` → `nacos-mcp-demo:8082` |
+| **存储面** | 应用 → MySQL `app`；Nacos → MySQL `nacos2`；Higress → Redis | `3306` / `6379` |
+
+#### 一次 MCP 调用怎么走
+
+1. Agent 连 `http://localhost:8081/mcp/mcp-test/sse`（映射到 Higress 容器 `8080`）。
+2. Higress 用 Redis（`redis:6379`）建 SSE 会话，返回 `sessionId`。
+3. Agent `tools/list` / `tools/call`；Higress 按 Nacos 里 MCP Server `mcp-test` 的工具定义，把调用转成对 `nacos-mcp-demo` 的 HTTP。
+4. Higress 在 `mcp-net` 上按 Nacos 下发的容器名/IP 访问 `nacos-mcp-demo:8082`（如 `GET /api/orders`）。
+5. Spring Boot 用 JDBC 访问 `mysql:3306/app`，结果原路经 Higress 回到 Agent。
+
+旁路：浏览器/curl 可直连 `localhost:8082` 测 REST，不必经过 Higress。Nacos / Higress 控制台分别是 `localhost:8848/nacos/`（或 `8080`）和 `localhost:8001/`。
+
+#### 容器内 vs 宿主机地址
+
+| 调用方 | Nacos | MySQL | Redis | 业务 API | MCP SSE |
+|--------|-------|-------|-------|----------|---------|
+| 容器内（应用 / Higress） | `nacos-standalone:8848` | `mysql:3306` | `redis:6379` | `nacos-mcp-demo:8082` | `higress:8080` |
+| 宿主机（脚本、Agent、浏览器） | `localhost:8848` | `localhost:3306` | `localhost:6379` | `localhost:8082` | `localhost:8081` |
+
+`docker-compose.yml` 已用环境变量覆盖 `application.yml` 里的远程 IP。IDE 在宿主机直接跑应用时，要把数据源和 Nacos 改成 `localhost`；这样注册的是宿主机 IP，`mcp-net` 里的 Higress 通常访问不到，MCP 转发会失败。联调 MCP 请用 Compose 起应用容器。
+
+#### Compose 与网络声明
+
+- `docker-compose-infra.yml`：`mysql`、`nacos`、`redis`、`higress` → `mcp-net`
+- `docker-compose.yml`：`nacos-mcp-demo` → 外部网络 `mcp-net`
+- Higress 配置挂在宿主机 `/app/higress` → 容器 `/data`（McpBridge、Secret、`higress-config`）
+
 ### 工作流程
 
 1. **服务注册**: Spring Boot 应用启动后自动注册到 Nacos
-2. **MCP 配置**: 在 Nacos 控制台创建 MCP Server，配置工具列表
-3. **网关暴露**: Higress 从 Nacos 读取 MCP 配置，暴露 SSE 端点
-4. **AI 调用**: Qwen Code 通过 SSE 端点调用 MCP 工具
+2. **MCP 配置**: 在 Nacos 注册 MCP Server，并从 OpenAPI 导入 16 个工具（可用脚本或控制台）
+3. **网关暴露**: Higress MCP Bridge 从 Nacos 拉取配置，经 Redis 暴露 SSE 端点
+4. **AI 调用**: Cursor / Qwen Code 等 Agent 通过 SSE 调用 MCP 工具
 
 ## 技术栈
 
@@ -48,86 +147,85 @@ Spring Boot 应用注册到 Nacos，通过 Higress MCP Bridge 暴露为 MCP Serv
 
 ## 完整配置流程
 
-### 步骤一：启动依赖服务
-
-启动 MySQL、Nacos、Redis 和 Higress：
+### 方式 A：命令行一键（推荐）
 
 ```bash
+# 1. 创建 Docker 网络（仅首次）
+docker network create mcp-net 2>/dev/null || true
+
+# 2. 基础设施：MySQL / Nacos / Redis / Higress
 docker compose -f docker-compose-infra.yml up -d
+
+# 3. 构建并启动 Spring Boot 服务（8082）
+./build.sh
+
+# 4. 配置 Nacos MCP + Higress MCP Bridge（OpenAPI → 16 工具）
+./scripts/setup-mcp-higress.sh
 ```
 
-等待所有服务启动（约 1-2 分钟）：
+MySQL 首次启动会通过 `src/main/resources/db/docker/` 自动创建 **`app`** 业务库与 **`nacos2`** 库表。应用启动时 **Flyway** 执行建表与演示数据，并注册到 Nacos。
+
+### 方式 B：分步说明
+
+#### 步骤一：启动依赖服务
 
 ```bash
+docker network create mcp-net 2>/dev/null || true
+docker compose -f docker-compose-infra.yml up -d
 docker compose -f docker-compose-infra.yml ps
 ```
 
-创建业务库 `app`（全新 MySQL 数据卷会在容器首次启动时自动创建；若库已存在可跳过）：
+| 服务 | 地址 |
+|------|------|
+| Nacos 控制台 | http://localhost:8848/nacos/ 或 http://localhost:8080 |
+| Higress 控制台 | http://localhost:8001/ |
+| MySQL | `localhost:3306`（root / root） |
+| Redis | `localhost:6379`（密码 `admin1234`） |
 
-```bash
-docker exec -i mysql mysql -uroot -proot < src/main/resources/db/create-app-database.sql
-```
+Nacos 控制台默认账号 **`nacos` / `nacos`**。若无法登录，参见 [常见问题](#6-nacos-控制台无法登录)。
 
-### 步骤二：构建并启动本服务
+#### 步骤二：构建并启动本服务
 
 ```bash
 ./build.sh
 ```
 
-服务启动时会通过 **Flyway** 自动执行未应用的数据库迁移（建表 + 演示种子数据），并注册到 Nacos。
-
-### 步骤三：在 Nacos 配置 MCP Server
-
-1. 访问 Nacos 控制台：http://localhost:8848/nacos/
-2. 进入 **AI 管理** → **MCP Server** → 点击 **新增**
-3. 配置基本信息：
-
-| 字段 | 值 |
-|------|-----|
-| MCP 名称 | `mcp-test` |
-| 描述 | 用户管理、订单管理、员工岗位查询 |
-| 版本 | `1.0.0` |
-
-4. 配置端点：
-
-| 字段 | 值 |
-|------|-----|
-| 端点类型 | `HTTP` |
-| 服务引用 | 选择 `nacos-mcp-demo` |
-| 导出路径 | `/mcp` |
-
-5. 导入工具配置：
-   - 选择"从 OpenAPI 文件导入"
-   - 上传 `openapi-spec.json` 文件
-   - 确认导入 16 个工具
-
-6. 保存并发布
-
-### 步骤四：配置 Higress MCP Bridge
-
-通过 Higress 控制台配置 MCP Bridge：
-
-1. 访问 Higress 控制台：http://localhost:8001/
-2. 进入 **MCP Bridge** 配置
-3. 添加 Nacos 数据源：
-   - 地址：`http://nacos-standalone:8848`
-   - 用户名：`nacos`
-   - 密码：`nacos`
-4. 保存配置
-
-Higress 会自动从 Nacos 读取 MCP Server 配置并暴露 SSE 端点。
-
-### 步骤五：验证 SSE 端点
+本地未安装 JDK/Maven 时，可用 Docker 打包后再构建镜像：
 
 ```bash
-timeout 5 curl -s http://localhost:8081/mcp/mcp-test/sse
+docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 \
+  mvn clean package -DskipTests
+docker compose build && docker compose up -d
+```
+
+#### 步骤三～四：MCP 与 Higress（脚本或控制台）
+
+**脚本（推荐）**：
+
+```bash
+./scripts/setup-mcp-higress.sh
+```
+
+脚本会：将 `openapi-spec.json` 转为 Nacos `toolSpecification`（16 个工具）、创建/更新 MCP Server `mcp-test`、写入 Higress McpBridge 与 Redis 配置并重启 Higress。
+
+**控制台（可选）**：步骤与字段见下文 [Nacos 控制台配置 MCP Server](#nacos-控制台配置-mcp-server)；Higress 可在 http://localhost:8001/ 的 **MCP Bridge** 中手动添加 Nacos（`nacos-standalone:8848`，`enableMCPServer: true`）。排查细节见 [HIGRESS_DEPLOYMENT_GUIDE.md](./HIGRESS_DEPLOYMENT_GUIDE.md)。
+
+#### 步骤五：验证 SSE 端点
+
+SSE 为长连接，请加超时：
+
+```bash
+curl --max-time 3 -s http://localhost:8081/mcp/mcp-test/sse
 ```
 
 正常响应：
+
 ```
 event: endpoint
 data: /mcp/mcp-test?sessionId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
+
+Higress 刚重启后若返回 404，等待约 10～20 秒再试，或重新执行 `./scripts/setup-mcp-higress.sh`。
 
 ### 步骤六：使用 Qwen Code 调用 MCP 服务
 
@@ -199,57 +297,41 @@ Qwen Code 可以调用以下 16 个工具：
 
 ### 1. 前置条件
 
-- JDK 17+
-- Maven 3.8+
-- Docker & Docker Compose
-- MySQL 8.0（容器运行）
+- **Docker** 与 **Docker Compose**（`docker compose` 子命令）
+- **JDK 17+ / Maven 3.8+**（可选；亦可用 Maven 官方 Docker 镜像打包）
 
 ### 2. 构建和部署
 
-#### 方式一：一键构建（推荐）
+与 [方式 A：命令行一键](#方式-a命令行一键推荐) 相同：`mcp-net` → `docker-compose-infra.yml` → `./build.sh` → `./scripts/setup-mcp-higress.sh`。
+
+`build.sh` 使用 **`docker compose`**（非 `docker-compose`），启动单个应用容器：
+
+| 容器 | 端口 | Nacos 命名空间 |
+|------|------|----------------|
+| `nacos-mcp-demo` | 8082 | `public` |
+
+分步命令：
 
 ```bash
-./build.sh
-```
-
-自动完成：Maven 打包 → Docker 构建镜像 → 容器重启
-
-#### 方式二：分步构建
-
-```bash
-# 仅 Maven 打包
-./build.sh package
-
-# 打包 + 构建 Docker 镜像
-./build.sh build
-
-# 仅重启容器
-./build.sh restart
-```
-
-#### 方式三：手动部署
-
-```bash
-# Maven 打包
-mvn clean package -DskipTests
-
-# 构建 Docker 镜像
-docker-compose build
-
-# 启动/重启容器
-docker-compose down && docker-compose up -d
+./build.sh package    # 仅 Maven 打包
+./build.sh build      # 打包 + 构建镜像
+./build.sh up         # 启动应用容器
+./build.sh down       # 停止应用容器
 ```
 
 ### 3. 验证服务
 
 ```bash
-# 检查服务是否正常运行
+# REST API
 curl http://localhost:8082/api/users
 curl http://localhost:8082/api/orders
 curl "http://localhost:8082/api/employee/position?name=%E5%BC%A0%E4%BC%9F"
 
-# 检查服务是否注册到 Nacos
+# Nacos 注册（public 命名空间下服务名均为 nacos-mcp-demo）
 curl "http://localhost:8848/nacos/v1/ns/instance/list?serviceName=nacos-mcp-demo"
+
+# MCP SSE
+curl --max-time 3 -s http://localhost:8081/mcp/mcp-test/sse
 ```
 
 ---
@@ -283,7 +365,8 @@ MySQL 运行在 Docker 容器中，自动持久化数据：
 |------|------|
 | `src/main/resources/db/migration/` | 结构迁移（`V1__` 起，只增不改） |
 | `src/main/resources/db/migration-seed/` | 演示种子数据（默认随应用启动导入） |
-| `src/main/resources/db/create-app-database.sql` | 仅创建 `app` 库（迁移前执行一次） |
+| `src/main/resources/db/docker/` | MySQL 容器 **首次** 启动：`app` 库、`nacos2`  schema |
+| `src/main/resources/db/create-app-database.sql` | 手动补建 `app` 库（非全新数据卷时） |
 
 **默认行为**：应用启动时 Flyway 连接 `app` 库，依次执行 `V1__baseline_schema.sql`、`V2__seed_demo_data.sql`，并在库中维护 `flyway_schema_history` 表。
 
@@ -307,7 +390,8 @@ export SPRING_PROFILES_ACTIVE=prod
 ```bash
 docker exec -i mysql mysql -uroot -proot -e "DROP DATABASE IF EXISTS app;"
 docker exec -i mysql mysql -uroot -proot < src/main/resources/db/create-app-database.sql
-# 重启 nacos-mcp-demo 应用，Flyway 会重新执行 V1、V2
+# 重启应用容器，Flyway 会重新执行 V1、V2
+docker compose restart nacos-mcp-demo
 ```
 
 **从旧版手工 `init.sql` 升级**：若 `app` 库中已有表但没有 `flyway_schema_history`，请先按上面步骤删库重建，避免 Flyway 与手工建表冲突。
@@ -383,14 +467,24 @@ docker exec -i mysql mysql -uroot -proot < src/main/resources/db/create-app-data
 
 ## MCP 工具配置
 
-### 通过 OpenAPI 文件导入
+### 通过脚本从 OpenAPI 生成（推荐）
 
-在 Nacos 控制台可以使用 `openapi-spec.json` 文件批量导入工具配置：
+```bash
+# 仅输出 JSON（调试）
+./scripts/openapi_to_nacos_tools.py
+
+# 写入 Nacos 并配置 Higress
+./scripts/setup-mcp-higress.sh
+```
+
+修改 API 后更新 `openapi-spec.json`，再执行 `setup-mcp-higress.sh` 即可同步工具定义。
+
+### 通过 Nacos 控制台 OpenAPI 导入（可选）
 
 1. 进入 MCP Server 编辑页面
-2. 选择"从 OpenAPI 文件导入"
-3. 上传 `openapi-spec.json` 文件
-4. 确认导入
+2. 选择「从 OpenAPI 文件导入」
+3. 上传 `openapi-spec.json`
+4. 确认导入 16 个工具
 
 ### 工具列表（共 16 个）
 
@@ -488,7 +582,18 @@ curl -X POST http://localhost:8082/api/employee \
 
 ## 配置说明
 
+### Docker 环境变量（`docker-compose.yml`）
+
+容器内通过环境变量覆盖 `application.yml` 中的地址，例如：
+
+- `SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/app?...`
+- `SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos-standalone:8848`
+
+本地 IDE 直连时，请将数据源与 Nacos 地址改为 `localhost` 或你的宿主机 IP。
+
 ### application.yml
+
+仓库内默认配置面向某远程 IP；**Docker 部署以 `docker-compose.yml` 环境变量为准**。本地运行可参考：
 
 ```yaml
 server:
@@ -498,25 +603,17 @@ spring:
   application:
     name: nacos-mcp-demo
   datasource:
-    url: jdbc:mysql://localhost:3306/app?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/app?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: root
-    driver-class-name: com.mysql.cj.jdbc.Driver
   cloud:
     nacos:
       discovery:
-        server-addr: http://nacos-standalone:8848
+        server-addr: nacos-standalone:8848   # Docker 网络内
         username: nacos
         password: nacos
         namespace: public
         group: DEFAULT_GROUP
-        register-enabled: true
-
-mybatis:
-  mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.example.mcp.entity
-  configuration:
-    map-underscore-to-camel-case: true
 ```
 
 ---
@@ -525,14 +622,18 @@ mybatis:
 
 ```
 nacos-mcp-demo/
-├── build.sh                            # 构建和部署脚本
+├── build.sh                            # Maven 打包 + docker compose 构建/启动
+├── scripts/
+│   ├── setup-mcp-higress.sh            # Nacos MCP + Higress Bridge 一键配置
+│   ├── openapi_to_nacos_tools.py       # OpenAPI → Nacos toolSpecification
+│   ├── higress-mcpbridge-default.yaml  # Higress McpBridge 模板
+│   └── higress-nacos-secret.yaml       # Nacos 认证 Secret 模板
 ├── Dockerfile                          # Docker 镜像构建
-├── docker-compose.yml                  # 本服务 Docker Compose 配置
-├── docker-compose-infra.yml            # 依赖服务（MySQL/Nacos/Redis/Higress）
-├── .env                                # 环境变量
-├── pom.xml                             # Maven 依赖
-├── openapi-spec.json                   # OpenAPI 规范文件（用于 MCP 工具导入）
-├── MCP-USAGE-EXAMPLES.md               # MCP 工具调用示例文档
+├── docker-compose.yml                  # 应用服务（8082）
+├── docker-compose-infra.yml            # MySQL / Nacos / Redis / Higress
+├── HIGRESS_DEPLOYMENT_GUIDE.md         # Higress MCP 排障与配置说明
+├── openapi-spec.json                   # OpenAPI（MCP 工具来源）
+├── MCP-USAGE-EXAMPLES.md               # MCP 工具调用示例
 ├── README.md                           # 本文档
 └── src/main/
     ├── java/com/example/mcp/
@@ -580,19 +681,20 @@ docker exec -i mysql mysql -uroot -proot -e "USE app; SHOW TABLES;"
 
 ### 2. 服务未注册到 Nacos
 
-检查 Nacos 连接：
-
 ```bash
-docker logs nacos-mcp-demo | grep nacos
+docker logs nacos-mcp-demo --tail 50
+curl "http://localhost:8848/nacos/v1/ns/instance/list?serviceName=nacos-mcp-demo"
 ```
 
-确保 Nacos 服务可访问：
+确认应用与 Nacos 在同一 Docker 网络 **`mcp-net`**，且 Nacos 地址为容器名 **`nacos-standalone:8848`**。
 
-```bash
-curl http://localhost:8848/nacos/
-```
+### 3. MCP SSE 返回 404
 
-### 3. 中文参数问题
+1. 确认 `./scripts/setup-mcp-higress.sh` 已执行，且 `docker exec higress wc -c /data/mcpbridges/default.yaml` 非 0。
+2. Higress 重启后等待片刻再访问 `http://localhost:8081/mcp/mcp-test/sse`。
+3. 详见 [HIGRESS_DEPLOYMENT_GUIDE.md](./HIGRESS_DEPLOYMENT_GUIDE.md)。
+
+### 4. 中文参数问题
 
 URL 中的中文参数需要进行 URL 编码：
 
@@ -604,16 +706,29 @@ curl "http://localhost:8082/api/employee/position?name=张伟"
 curl "http://localhost:8082/api/employee/position?name=%E5%BC%A0%E4%BC%9F"
 ```
 
-### 4. 重新初始化数据库
+### 5. 重新初始化数据库
 
 参见上文 [数据库迁移（Flyway）](#数据库迁移flyway) 中的「重新初始化业务库」。
 
-### 5. 查看服务日志
+### 6. Nacos 控制台无法登录
+
+Nacos 3.x 需在库表 `nacos2.users` 中存在用户。可创建管理员 **`nacos` / `nacos`**：
 
 ```bash
-# 实时查看日志
-docker logs -f nacos-mcp-demo
+HASH=$(docker run --rm python:3.12-slim sh -c \
+  "pip -q install bcrypt && python -c \"import bcrypt; print(bcrypt.hashpw(b'nacos', bcrypt.gensalt(rounds=10, prefix=b'2a')).decode())\"")
+docker exec mysql mysql -uroot -proot nacos2 -e "
+INSERT INTO users (username, password, enabled) VALUES ('nacos', '${HASH}', 1)
+  ON DUPLICATE KEY UPDATE password='${HASH}', enabled=1;
+INSERT IGNORE INTO roles (username, role) VALUES ('nacos', 'ROLE_ADMIN');
+INSERT IGNORE INTO permissions (role, resource, action) VALUES ('ROLE_ADMIN', '*:*:*', 'rw');
+"
+```
 
-# 查看最近 100 行日志
-docker logs nacos-mcp-demo --tail 100
+### 7. 查看服务日志
+
+```bash
+docker logs -f nacos-mcp-demo
+docker logs -f higress --tail 100
+docker logs -f nacos-standalone --tail 100
 ```
