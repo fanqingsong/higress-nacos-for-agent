@@ -24,6 +24,7 @@ Thumbs.db
 
 # Agent (Python)
 agent/.venv/
+agent/.langgraph_api/
 agent/__pycache__/
 **/__pycache__/
 
