@@ -11,6 +11,11 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/app?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
       - SPRING_DATASOURCE_USERNAME=root
       - SPRING_DATASOURCE_PASSWORD=root
+      - NACOS_SERVER_ADDR=nacos-standalone:8848
+      - NACOS_USERNAME=nacos
+      - NACOS_PASSWORD=nacos
+      - NACOS_NAMESPACE=public
+      - MCP_SERVER_NAME=mcp-test
       - SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos-standalone:8848
       - SPRING_CLOUD_NACOS_DISCOVERY_USERNAME=nacos
       - SPRING_CLOUD_NACOS_DISCOVERY_PASSWORD=nacos

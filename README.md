@@ -98,16 +98,16 @@ Nacos 控制台默认 `nacos` / `nacos`。Higress McpBridge 里 `nacosNamespaceI
 | 平面 | 路径 | 协议 / 端口 |
 |------|------|-------------|
 | **控制面** | 应用 → Nacos 注册实例；Higress → Nacos 拉 MCP Server 与实例列表 | HTTP `8848`，gRPC `9848` |
-| **数据面** | Agent → Higress SSE → 按 Nacos 实例转发到 Spring Boot `/api/*` | 宿主机 `8081`；网内 `higress:8080` → `nacos-mcp-demo:8082` |
+| **数据面** | Agent → Higress SSE → 转发到 Spring Boot 内置 MCP Server（SSE） | 宿主机 `8081`；网内 `higress:8080` → `nacos-mcp-demo:8082` |
 | **存储面** | 应用 → MySQL `app`；Nacos → MySQL `nacos2`；Higress → Redis | `3306` / `6379` |
 
 #### 一次 MCP 调用怎么走
 
 1. Agent 连 `http://localhost:8081/mcp/mcp-test/sse`（映射到 Higress 容器 `8080`）。
 2. Higress 用 Redis（`redis:6379`）建 SSE 会话，返回 `sessionId`。
-3. Agent `tools/list` / `tools/call`；Higress 按 Nacos 里 MCP Server `mcp-test` 的工具定义，把调用转成对 `nacos-mcp-demo` 的 HTTP。
-4. Higress 在 `mcp-net` 上按 Nacos 下发的容器名/IP 访问 `nacos-mcp-demo:8082`（如 `GET /api/orders`）。
-5. Spring Boot 用 JDBC 访问 `mysql:3306/app`，结果原路经 Higress 回到 Agent。
+3. Agent `tools/list` / `tools/call`；Higress 按 Nacos 中自动注册的 MCP Server `mcp-test` 转发到 `nacos-mcp-demo:8082` 的 MCP 端点。
+4. Spring AI 执行对应 `@Tool` 方法，经 Service/MyBatis 访问 `mysql:3306/app`。
+5. 结果原路经 Higress 回到 Agent。
 
 旁路：浏览器/curl 可直连 `localhost:8082` 测 REST，不必经过 Higress。Nacos / Higress 控制台分别是 `localhost:8848/nacos/`（或 `8080`）和 `localhost:8001/`。
 
@@ -129,14 +129,15 @@ Nacos 控制台默认 `nacos` / `nacos`。Higress McpBridge 里 `nacosNamespaceI
 ### 工作流程
 
 1. **服务注册**: Spring Boot 应用启动后自动注册到 Nacos
-2. **MCP 配置**: 在 Nacos 注册 MCP Server，并从 OpenAPI 导入 16 个工具（可用脚本或控制台）
-3. **网关暴露**: Higress MCP Bridge 从 Nacos 拉取配置，经 Redis 暴露 SSE 端点
+2. **MCP 自动注册**: 应用内 `@Tool` 定义的 16 个工具随启动写入 Nacos（[Spring AI Alibaba MCP Registry](https://nacos.io/docs/latest/manual/user/ai/mcp-auto-register/)）
+3. **网关暴露**: Higress MCP Bridge 从 Nacos 拉取 MCP 配置，经 Redis 暴露 SSE 端点
 4. **AI 调用**: Cursor / Qwen Code 等 Agent 通过 SSE 调用 MCP 工具
 
 ## 技术栈
 
-- Spring Boot 3.2.0
-- Spring Cloud Alibaba 2023.0.0.0-RC1
+- Spring Boot 3.4.5
+- Spring AI 1.1.0 + Spring AI Alibaba MCP Registry
+- Spring Cloud Alibaba 2023.0.3.2
 - Nacos 3.1.2
 - Higress Gateway
 - MySQL 8.0（业务数据存储）
@@ -159,11 +160,11 @@ docker compose -f docker-compose-infra.yml up -d
 # 3. 构建并启动 Spring Boot 服务（8082）
 ./build.sh
 
-# 4. 配置 Nacos MCP + Higress MCP Bridge（OpenAPI → 16 工具）
+# 4. 配置 Higress MCP Bridge（MCP Server 由应用在步骤 3 启动时自动注册到 Nacos）
 ./scripts/setup-mcp-higress.sh
 ```
 
-MySQL 首次启动会通过 `src/main/resources/db/docker/` 自动创建 **`app`** 业务库与 **`nacos2`** 库表。应用启动时 **Flyway** 执行建表与演示数据，并注册到 Nacos。
+MySQL 首次启动会通过 `src/main/resources/db/docker/` 自动创建 **`app`** 业务库与 **`nacos2`** 库表。应用启动时 **Flyway** 执行建表与演示数据，并向 Nacos 注册服务实例与 MCP Server（`mcp-test`）。
 
 ### 方式 B：分步说明
 
@@ -198,7 +199,7 @@ docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 \
 docker compose build && docker compose up -d
 ```
 
-#### 步骤三～四：MCP 与 Higress（脚本或控制台）
+#### 步骤三～四：Higress MCP Bridge
 
 **脚本（推荐）**：
 
@@ -206,9 +207,9 @@ docker compose build && docker compose up -d
 ./scripts/setup-mcp-higress.sh
 ```
 
-脚本会：将 `openapi-spec.json` 转为 Nacos `toolSpecification`（16 个工具）、创建/更新 MCP Server `mcp-test`、写入 Higress McpBridge 与 Redis 配置并重启 Higress。
+脚本会：清理旧的 OpenAPI/HTTP 代理式 MCP 定义（若存在）、写入 Higress McpBridge 与 Redis 配置并重启 Higress。**MCP Server 与 16 个工具无需再手动或脚本导入**，由 `nacos-mcp-demo` 启动时自动注册。
 
-**控制台（可选）**：步骤与字段见下文 [Nacos 控制台配置 MCP Server](#nacos-控制台配置-mcp-server)；Higress 可在 http://localhost:8001/ 的 **MCP Bridge** 中手动添加 Nacos（`nacos-standalone:8848`，`enableMCPServer: true`）。排查细节见 [HIGRESS_DEPLOYMENT_GUIDE.md](./HIGRESS_DEPLOYMENT_GUIDE.md)。
+**控制台（可选）**：在 Nacos **AI 管理 → MCP Server** 可查看自动注册的 `mcp-test`；Higress 可在 http://localhost:8001/ 的 **MCP Bridge** 中手动添加 Nacos（`nacos-standalone:8848`，`enableMCPServer: true`）。排查细节见 [HIGRESS_DEPLOYMENT_GUIDE.md](./HIGRESS_DEPLOYMENT_GUIDE.md)。
 
 #### 步骤五：验证 SSE 端点
 
@@ -398,35 +399,15 @@ docker compose restart nacos-mcp-demo
 
 ---
 
-## Nacos 控制台配置 MCP Server
+## Nacos MCP 自动注册
 
-服务注册到 Nacos 后，需要在 Nacos 控制台配置 MCP Server。
+应用使用 **Spring AI Alibaba MCP Registry**，启动后将 MCP Server `mcp-test` 与全部工具注册到 Nacos。配置见 `src/main/resources/application.yml` 中的 `spring.ai.mcp.server` 与 `spring.ai.alibaba.mcp.nacos`。
 
-### 访问 Nacos
+- 环境变量：`NACOS_SERVER_ADDR`、`NACOS_USERNAME`、`NACOS_PASSWORD`、`MCP_SERVER_NAME`（默认 `mcp-test`）
+- 工具定义：`src/main/java/com/example/mcp/tools/`（`@Tool` / `@ToolParam`）
+- 若曾用 OpenAPI 脚本注册过同名 MCP，首次迁移时 `setup-mcp-higress.sh` 会尝试删除旧定义，避免 `mcp server info is not compatible` 启动失败
 
-- 地址：http://localhost:8848/nacos/
-- 用户名：`nacos`
-- 密码：`nacos`
-
-### 新增 MCP Server
-
-进入 **AI 管理** → **MCP Server** → 点击 **新增**
-
-#### 基本信息
-
-| 字段 | 值 |
-|------|-----|
-| MCP 名称 | `mcp-test` |
-| 描述 | 用户管理、订单管理、员工岗位查询 |
-| 版本 | `1.0.0` |
-
-#### 端点配置
-
-| 字段 | 值 |
-|------|-----|
-| 端点类型 | `HTTP` |
-| 服务引用 | 选择 `nacos-mcp-demo` 服务 |
-| 导出路径 | `/mcp` |
+在 Nacos 控制台 **AI 管理 → MCP Server** 可查看、热更新工具描述或启停工具，无需重启应用。
 
 ---
 
@@ -467,24 +448,7 @@ docker compose restart nacos-mcp-demo
 
 ## MCP 工具配置
 
-### 通过脚本从 OpenAPI 生成（推荐）
-
-```bash
-# 仅输出 JSON（调试）
-./scripts/openapi_to_nacos_tools.py
-
-# 写入 Nacos 并配置 Higress
-./scripts/setup-mcp-higress.sh
-```
-
-修改 API 后更新 `openapi-spec.json`，再执行 `setup-mcp-higress.sh` 即可同步工具定义。
-
-### 通过 Nacos 控制台 OpenAPI 导入（可选）
-
-1. 进入 MCP Server 编辑页面
-2. 选择「从 OpenAPI 文件导入」
-3. 上传 `openapi-spec.json`
-4. 确认导入 16 个工具
+新增或修改 MCP 工具：在 `src/main/java/com/example/mcp/tools/` 增加 `@Tool` 方法（可复用现有 Service），重启 `nacos-mcp-demo` 后自动同步到 Nacos。REST API 仍保留在 Controller 层；`openapi-spec.json` 仅作文档/对照，不再用于注册。
 
 ### 工具列表（共 16 个）
 
@@ -624,22 +588,23 @@ spring:
 nacos-mcp-demo/
 ├── build.sh                            # Maven 打包 + docker compose 构建/启动
 ├── scripts/
-│   ├── setup-mcp-higress.sh            # Nacos MCP + Higress Bridge 一键配置
-│   ├── openapi_to_nacos_tools.py       # OpenAPI → Nacos toolSpecification
+│   ├── setup-mcp-higress.sh            # Higress MCP Bridge 一键配置
+│   ├── openapi_to_nacos_tools.py       # （遗留）OpenAPI → Nacos toolSpecification
 │   ├── higress-mcpbridge-default.yaml  # Higress McpBridge 模板
 │   └── higress-nacos-secret.yaml       # Nacos 认证 Secret 模板
 ├── Dockerfile                          # Docker 镜像构建
 ├── docker-compose.yml                  # 应用服务（8082）
 ├── docker-compose-infra.yml            # MySQL / Nacos / Redis / Higress
 ├── HIGRESS_DEPLOYMENT_GUIDE.md         # Higress MCP 排障与配置说明
-├── openapi-spec.json                   # OpenAPI（MCP 工具来源）
+├── openapi-spec.json                   # REST API OpenAPI 文档
 ├── MCP-USAGE-EXAMPLES.md               # MCP 工具调用示例
 ├── README.md                           # 本文档
 └── src/main/
     ├── java/com/example/mcp/
     │   ├── NacosMcpDemoApplication.java       # 启动类
     │   ├── config/
-    │   │   └── NacosMcpRegistrar.java         # Nacos 元数据注册
+    │   │   └── McpServerConfiguration.java    # MCP ToolCallbackProvider
+    │   ├── tools/                             # @Tool MCP 工具（自动注册到 Nacos）
     │   ├── controller/
     │   │   ├── UserController.java            # 用户管理 API
     │   │   ├── OrderController.java           # 订单管理 API

@@ -10,8 +10,8 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
  *
  * 功能说明：
  * 1. 注册到 Nacos 服务注册中心
- * 2. 提供 MCP Server 能力
- * 3. 提供用户管理、订单查询、员工岗位查询服务（基于 MySQL + MyBatis）
+ * 2. 通过 Spring AI Alibaba 将 MCP Server 与 Tools 自动注册到 Nacos
+ * 3. 提供用户管理、订单查询、员工岗位查询 REST API 与 MCP 工具（MySQL + MyBatis）
  */
 @SpringBootApplication
 @EnableDiscoveryClient
