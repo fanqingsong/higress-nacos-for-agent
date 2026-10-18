@@ -1,0 +1,75 @@
+{
+  "_comment": "Nacos MCP Router 客户端配置示例。原理与 Agent 用法见 NACOS-MCP-ROUTER.md",
+  "streamable_http_router_mode": {
+    "mcpServers": {
+      "nacos-mcp-router": {
+        "url": "http://localhost:8000/mcp"
+      }
+    }
+  },
+  "sse_router_mode": {
+    "mcpServers": {
+      "nacos-mcp-router": {
+        "url": "http://localhost:8000/sse"
+      }
+    }
+  },
+  "stdio_docker_mcp_net": {
+    "mcpServers": {
+      "nacos-mcp-router": {
+        "command": "docker",
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "--network",
+          "mcp-net",
+          "-e",
+          "NACOS_ADDR=nacos-standalone:8848",
+          "-e",
+          "NACOS_USERNAME=nacos",
+          "-e",
+          "NACOS_PASSWORD=nacos",
+          "-e",
+          "NACOS_NAMESPACE=public",
+          "-e",
+          "TRANSPORT_TYPE=stdio",
+          "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-mcp-router:0.2.2"
+        ]
+      }
+    }
+  },
+  "stdio_docker_host_network": {
+    "mcpServers": {
+      "nacos-mcp-router": {
+        "command": "docker",
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "--network",
+          "host",
+          "-e",
+          "NACOS_ADDR=127.0.0.1:8848",
+          "-e",
+          "NACOS_USERNAME=nacos",
+          "-e",
+          "NACOS_PASSWORD=nacos",
+          "-e",
+          "NACOS_NAMESPACE=public",
+          "-e",
+          "TRANSPORT_TYPE=stdio",
+          "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-mcp-router:0.2.2"
+        ]
+      }
+    }
+  },
+  "streamable_http_proxy_mcp_test": {
+    "_comment": "需先：docker compose -f docker-compose-infra.yml --profile mcp-proxy up -d",
+    "mcpServers": {
+      "mcp-test-via-router-proxy": {
+        "url": "http://localhost:8002/mcp"
+      }
+    }
+  }
+}

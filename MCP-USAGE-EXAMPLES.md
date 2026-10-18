@@ -2,6 +2,8 @@
 
 本文档提供 AI Agent 调用 MCP 工具的完整示例，包含用户提问、AI 调用方式和 AI 回复。
 
+若 Agent 通过 **Nacos MCP Router** 接入（而非直连 Higress SSE），业务工具需经 Router 的 `use_tool("mcp-test", "<工具名>", params)` 调用；接入方式与原理见 **[NACOS-MCP-ROUTER.md](./NACOS-MCP-ROUTER.md)**。
+
 ---
 
 ## 📦 订单管理

@@ -89,6 +89,8 @@ Spring Boot 应用注册到 Nacos，通过 Higress MCP Bridge 暴露为 MCP Serv
 | 注册 / 配置 / MCP 定义 | `nacos-standalone` | `nacos-standalone:8848`（gRPC `9848`） | `8848` / `9848` / `8080` | 别名 `nacos-standalone-mysql`；控制台也可走 `8080` |
 | MCP SSE 会话 | `redis` | `redis:6379` | `6379` | 密码 `admin1234`；Higress 必须用容器名，不能写会变的 IP |
 | MCP / HTTP 网关 | `higress` | `higress:8080`、`:8001`、`:8443` | `8081` / `8001` / `8443` | 容器内网关是 **8080**，对外是 **8081** |
+| Nacos MCP Router | `nacos-mcp-router` | `nacos-mcp-router:8000` | `8000` | Router 模式 streamableHTTP：`/mcp`、`/sse` |
+| MCP Router Proxy（可选） | `nacos-mcp-router-proxy` | `:8000`（映射宿主机 **8002**） | `8002` | `PROXIED_MCP_NAME=mcp-test`，需 `--profile mcp-proxy` |
 | 业务应用 | `nacos-mcp-demo` | `nacos-mcp-demo:8082` | `8082` | 注册到 Nacos namespace `public`；REST 与 MCP 工具调用均走此实例 |
 
 Nacos 控制台默认 `nacos` / `nacos`。Higress McpBridge 里 `nacosNamespaceId: public`，与 `docker-compose.yml` 中的注册命名空间一致。
@@ -132,6 +134,39 @@ Nacos 控制台默认 `nacos` / `nacos`。Higress McpBridge 里 `nacosNamespaceI
 2. **MCP 自动注册**: 应用内 `@Tool` 定义的 16 个工具随启动写入 Nacos（[Spring AI Alibaba MCP Registry](https://nacos.io/docs/latest/manual/user/ai/mcp-auto-register/)）
 3. **网关暴露**: Higress MCP Bridge 从 Nacos 拉取 MCP 配置，经 Redis 暴露 SSE 端点
 4. **AI 调用**: Cursor / Qwen Code 等 Agent 通过 SSE 调用 MCP 工具
+5. **（可选）Nacos MCP Router**: Agent 连接 Router，在 Nacos 中**搜索 / 安装 / 代理**多个 MCP Server，无需逐个配置端点
+
+### Nacos MCP Router（智能路由）
+
+[Nacos MCP Router](https://nacos.io/docs/next/manual/user/ai/nacos-mcp-router/) 是 **「MCP 的 MCP」**：向 Agent 提供在 Nacos Registry 中 **搜索、加载、代调** 其它 MCP（如本项目的 `mcp-test`）的能力，而不是直接暴露 16 个业务工具。
+
+| 模式 | 说明 | 本仓库默认 |
+|------|------|------------|
+| **Router** | 元工具 `search_mcp_server` → `add_mcp_server` → `use_tool` | `nacos-mcp-router`，端口 **8000** |
+| **Proxy** | 将 Registry 中某 MCP 转为 streamableHTTP，透明转发 | profile `mcp-proxy`，端口 **8002**，`mcp-test` |
+
+**原理、时序图、Agent 分步示例、与直连 Higress 的对比** → 详见 **[NACOS-MCP-ROUTER.md](./NACOS-MCP-ROUTER.md)**。
+
+**快速启动**（基础设施已 `up` 且 `mcp-test` 已注册）：
+
+```bash
+./scripts/setup-nacos-mcp-router.sh
+ENABLE_MCP_ROUTER_PROXY=true ./scripts/setup-nacos-mcp-router.sh   # 可选 Proxy
+```
+
+**Cursor 配置**（更多见 `scripts/mcp-client-nacos-router.json`）：
+
+```json
+{
+  "mcpServers": {
+    "nacos-mcp-router": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+典型 Router 模式链路：用户问「有哪些订单？」→ `search_mcp_server` → `add_mcp_server("mcp-test")` → `use_tool(..., "getAllOrders", {})`。
 
 ## 技术栈
 
@@ -162,6 +197,9 @@ docker compose -f docker-compose-infra.yml up -d
 
 # 4. 配置 Higress MCP Bridge（MCP Server 由应用在步骤 3 启动时自动注册到 Nacos）
 ./scripts/setup-mcp-higress.sh
+
+# 5. （可选）启动 Nacos MCP Router，供 Agent 搜索/代理 Nacos 中的 MCP
+./scripts/setup-nacos-mcp-router.sh
 ```
 
 MySQL 首次启动会通过 `src/main/resources/db/docker/` 自动创建 **`app`** 业务库与 **`nacos2`** 库表。应用启动时 **Flyway** 执行建表与演示数据，并向 Nacos 注册服务实例与 MCP Server（`mcp-test`）。
@@ -589,6 +627,8 @@ nacos-mcp-demo/
 ├── build.sh                            # Maven 打包 + docker compose 构建/启动
 ├── scripts/
 │   ├── setup-mcp-higress.sh            # Higress MCP Bridge 一键配置
+│   ├── setup-nacos-mcp-router.sh       # Nacos MCP Router 启动与校验
+│   ├── mcp-client-nacos-router.json    # Cursor 等 MCP 客户端配置示例
 │   ├── openapi_to_nacos_tools.py       # （遗留）OpenAPI → Nacos toolSpecification
 │   ├── higress-mcpbridge-default.yaml  # Higress McpBridge 模板
 │   └── higress-nacos-secret.yaml       # Nacos 认证 Secret 模板
@@ -596,6 +636,7 @@ nacos-mcp-demo/
 ├── docker-compose.yml                  # 应用服务（8082）
 ├── docker-compose-infra.yml            # MySQL / Nacos / Redis / Higress
 ├── HIGRESS_DEPLOYMENT_GUIDE.md         # Higress MCP 排障与配置说明
+├── NACOS-MCP-ROUTER.md                 # MCP Router 原理与 Agent 使用指南
 ├── openapi-spec.json                   # REST API OpenAPI 文档
 ├── MCP-USAGE-EXAMPLES.md               # MCP 工具调用示例
 ├── README.md                           # 本文档

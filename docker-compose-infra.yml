@@ -79,6 +79,51 @@ services:
       - mcp-net
     restart: unless-stopped
 
+  # Nacos MCP Router：在 Nacos MCP Registry 中搜索、安装并代理其它 MCP Server
+  # 文档：https://nacos.io/docs/next/manual/user/ai/nacos-mcp-router/
+  nacos-mcp-router:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-mcp-router:0.2.2
+    container_name: nacos-mcp-router
+    depends_on:
+      - nacos
+    ports:
+      - "8000:8000"
+    environment:
+      NACOS_ADDR: nacos-standalone:8848
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      NACOS_NAMESPACE: public
+      TRANSPORT_TYPE: streamable_http
+      MODE: router
+      PORT: 8000
+    networks:
+      - mcp-net
+    restart: unless-stopped
+
+  # Proxy 模式：将 Nacos 中已注册的 MCP（如 mcp-test）转为 streamableHTTP
+  # 启用：docker compose -f docker-compose-infra.yml --profile mcp-proxy up -d
+  nacos-mcp-router-proxy:
+    profiles:
+      - mcp-proxy
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-mcp-router:0.2.2
+    container_name: nacos-mcp-router-proxy
+    depends_on:
+      - nacos
+    ports:
+      - "8002:8000"
+    environment:
+      NACOS_ADDR: nacos-standalone:8848
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: nacos
+      NACOS_NAMESPACE: public
+      TRANSPORT_TYPE: streamable_http
+      MODE: proxy
+      PROXIED_MCP_NAME: mcp-test
+      PORT: 8000
+    networks:
+      - mcp-net
+    restart: unless-stopped
+
 networks:
   mcp-net:
     external: true

@@ -46,6 +46,10 @@
 | mysql | 3306 | 3306 | MySQL 数据库 |
 | redis | 6379 | 6379 | Redis 缓存 |
 | nacos-mcp-demo | 8082 | 8082 | 后端服务 |
+| nacos-mcp-router | 8000 | 8000 | Nacos MCP Router（streamableHTTP `/mcp`） |
+| nacos-mcp-router-proxy | 8000 | 8002 | MCP Router Proxy 模式（可选 profile `mcp-proxy`） |
+
+Router 工作原理与 Agent 使用步骤见 **[NACOS-MCP-ROUTER.md](./NACOS-MCP-ROUTER.md)**。
 
 ---
 
