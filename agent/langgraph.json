@@ -1,0 +1,21 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "deep_agent_todo_list": "./src/agent/graph.py:make_graph"
+  },
+  "env": "../.env",
+  "python_version": "3.12",
+  "http": {
+    "cors": {
+      "allow_origins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000"
+      ],
+      "allow_methods": ["*"],
+      "allow_headers": ["*"],
+      "allow_credentials": true
+    }
+  }
+}

@@ -1,0 +1,35 @@
+services:
+  mcp-deep-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: mcp-deep-agent
+    ports:
+      - "2024:2024"
+    env_file:
+      - .env
+    environment:
+      MCP_SSE_URL: http://higress:8080/mcp/mcp-test/sse
+    networks:
+      - mcp-net
+    restart: unless-stopped
+
+  mcp-chat-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_AGENT_URL: http://localhost:2024
+    container_name: mcp-chat-ui
+    ports:
+      - "5173:80"
+    depends_on:
+      - mcp-deep-agent
+    networks:
+      - mcp-net
+    restart: unless-stopped
+
+networks:
+  mcp-net:
+    external: true
+    name: mcp-net

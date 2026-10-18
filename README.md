@@ -375,6 +375,70 @@ curl --max-time 3 -s http://localhost:8081/mcp/mcp-test/sse
 
 ---
 
+## Agent 对话演示（Deep Agents + MCP）
+
+在 Higress SSE 之上增加 **LangGraph Deep Agent** 与 **Web 对话界面**，通过自然语言调用已注册的 16 个 MCP 工具（用户 / 订单 / 员工）。技术栈：[Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview)、`MCPAdapter`（SSE）、前端 [`useStream`](https://docs.langchain.com/oss/python/deepagents/frontend/todo-list)。
+
+### 前置条件
+
+- 已完成 [方式 A：命令行一键](#方式-a命令行一键推荐)（`mcp-net`、Higress、`nacos-mcp-demo`、MCP SSE 可访问）
+- 安装 [uv](https://docs.astral.sh/uv/)（Python Agent）与 **Node.js 18+**（前端）
+- 复制环境变量：`cp .env.example .env`，填写 **硅基流动** `SILICONFLOW_API_KEY`（OpenAI 兼容接口）
+
+### 启动步骤
+
+**终端 1 — LangGraph Agent（端口 2024）**
+
+```bash
+cd agent
+uv sync --dev
+uv run langgraph dev
+```
+
+启动日志中应看到 MCP 已加载约 **16** 个工具（经 `http://localhost:8081/mcp/mcp-test/sse`）。
+
+**终端 2 — 对话 UI（端口 5173）**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+浏览器打开 http://localhost:5173 ，或使用界面上的快捷问句。
+
+也可使用一键脚本（检查 SSE 后提示上述命令）：
+
+```bash
+chmod +x ./scripts/start-agent-demo.sh
+./scripts/start-agent-demo.sh          # 仅检查 + 说明
+./scripts/start-agent-demo.sh agent    # 前台启动 LangGraph
+./scripts/start-agent-demo.sh docker   # docker compose -f docker-compose-agent.yml
+```
+
+### 演示问句
+
+| 用户输入 | 预期 MCP 行为 |
+|----------|----------------|
+| 帮我查一下目前有哪些订单？ | `getAllOrders` |
+| 张三都买了什么？ | `getUserByName` → `getOrdersByUserId` |
+| 张伟是什么岗位？ | `getJobPosition` |
+
+复杂任务时 UI 顶部会显示 **Agent 进度**（`TodoListMiddleware`）；每条助手回复下方展示 **工具调用卡片**（工具名、参数、返回摘要）。
+
+### 环境变量（摘要）
+
+见 [.env.example](.env.example)：`SILICONFLOW_*`、`MCP_SSE_URL`、`VITE_AGENT_URL`。Agent 跑在 Docker 网络内时请将 `MCP_SSE_URL` 设为 `http://higress:8080/mcp/mcp-test/sse`。
+
+### 子项目说明
+
+| 目录 | 说明 |
+|------|------|
+| [agent/](agent/) | `create_deep_agent` + Higress SSE MCP + `langgraph dev` |
+| [frontend/](frontend/) | React + `@langchain/react` 流式对话 |
+
+---
+
 ## 数据库配置
 
 ### MySQL 容器
@@ -624,10 +688,13 @@ spring:
 
 ```
 nacos-mcp-demo/
+├── agent/                              # Deep Agent（LangGraph + MCP SSE）
+├── frontend/                           # 对话 UI（useStream）
 ├── build.sh                            # Maven 打包 + docker compose 构建/启动
 ├── scripts/
 │   ├── setup-mcp-higress.sh            # Higress MCP Bridge 一键配置
 │   ├── setup-nacos-mcp-router.sh       # Nacos MCP Router 启动与校验
+│   ├── start-agent-demo.sh             # Agent 对话演示环境检查与启动提示
 │   ├── mcp-client-nacos-router.json    # Cursor 等 MCP 客户端配置示例
 │   ├── openapi_to_nacos_tools.py       # （遗留）OpenAPI → Nacos toolSpecification
 │   ├── higress-mcpbridge-default.yaml  # Higress McpBridge 模板
